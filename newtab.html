@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Selah — Een moment met God</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="newtab.js" defer></script>
+</head>
+<body>
+  <div id="background" class="background" aria-hidden="true"></div>
+  <div class="shade" aria-hidden="true"></div>
+  <header class="topbar">
+    <a id="brandLink" class="brand" href="#" aria-label="Selah">✳ SELAH</a>
+    <div class="top-actions">
+      <span id="statusMessage" role="status">Klaar voor een nieuw moment</span>
+      <button id="settingsButton" class="small-button" type="button">Instellingen ⚙</button>
+    </div>
+  </header>
+
+  <main class="content">
+    <p id="greeting" class="greeting">Goedemorgen.</p>
+    <div id="clock" class="clock">09:41</div>
+    <p id="date" class="date"></p>
+
+    <section class="glass verse-card" aria-live="polite">
+      <p class="eyebrow">WOORD VOOR VANDAAG</p>
+      <p id="verseTranslation" class="verse-translation"></p>
+      <blockquote id="verseText" class="verse-text">Neem even de tijd.</blockquote>
+      <p id="verseReference" class="reference"></p>
+      <p id="verseCopyright" class="copyright"></p>
+      <p id="currentTheme" class="hint"></p>
+      <div class="actions">
+        <button id="favoriteVerseButton" class="round" type="button" title="Bewaar vers" aria-label="Bewaar vers"><span id="favoriteButtonLabel">♡</span></button>
+        <button id="nextVerseButton" class="round" type="button" title="Andere tekst" aria-label="Andere tekst">↻</button>
+        <button id="favoritesButton" class="round" type="button" title="Favorieten" aria-label="Favorieten">☆</button>
+      </div>
+    </section>
+
+    <section id="reflectionContainer" class="reflection">
+      <p class="eyebrow">STA EVEN STIL</p>
+      <p id="reflectionText">Wat mag je vandaag aan God toevertrouwen?</p>
+    </section>
+
+    <button id="refreshBackgroundButton" class="small-button background-refresh" type="button">Andere achtergrond</button>
+  </main>
+
+  <div id="panelBackdrop" class="panel-backdrop" hidden></div>
+  <aside id="settingsPanel" class="glass panel" aria-hidden="true" inert>
+    <div class="panel-heading"><h2>Jouw instellingen</h2><button id="closeSettingsButton" class="small-button" type="button">Sluiten</button></div>
+    <form id="settingsForm">
+      <label for="userName">Jouw naam</label>
+      <input id="userName" type="text" maxlength="60" placeholder="Bijvoorbeeld: Sam">
+
+      <label for="translationSelect">Bijbelvertaling</label>
+      <select id="translationSelect"><option value="">Offline voorbeeldteksten</option></select>
+      <p id="translationStatus" class="hint">Kies eventueel een vertaling die beschikbaar is via HelloAO.</p>
+      <button id="loadTranslationsButton" class="secondary" type="button">Vertalingen ophalen</button>
+
+      <label for="themeSelect">Favoriete thema</label>
+      <select id="themeSelect">
+        <option value="all">Alle thema's</option><option value="trust">Vertrouwen</option><option value="peace">Vrede en rust</option><option value="gratitude">Dankbaarheid</option><option value="hope">Kracht en hoop</option><option value="prayer">Gebed</option><option value="love">Liefde en genade</option>
+      </select>
+
+      <label for="backgroundFrequency">Achtergrond wisselen</label>
+      <select id="backgroundFrequency"><option value="daily">Dagelijks</option><option value="weekly">Wekelijks</option><option value="fixed">Vast houden</option></select>
+
+      <label class="check"><input id="reflectionEnabled" type="checkbox" checked> Toon reflectievraag</label>
+
+      <label for="unsplashAccessKey">Unsplash Access Key (optioneel)</label>
+      <input id="unsplashAccessKey" type="password" autocomplete="off" placeholder="Plak je Unsplash Access Key">
+      <p class="hint">Zonder sleutel gebruikt Selah een vaste achtergrond. Een sleutel is alleen nodig om via Unsplash nieuwe foto's op te halen.</p>
+      <div class="button-row"><button id="cancelSettingsButton" class="secondary" type="button">Annuleren</button><button class="primary" type="submit">Instellingen opslaan</button></div>
+      <p id="settingsMessage" class="status" role="status"></p>
+    </form>
+  </aside>
+
+  <aside id="favoritesPanel" class="glass panel" aria-hidden="true" inert>
+    <div class="panel-heading"><h2>Mijn favoriete verzen</h2><button id="closeFavoritesButton" class="small-button" type="button">Sluiten</button></div>
+    <input id="favoriteSearch" type="search" placeholder="Zoek tekst, verwijzing of notitie…">
+    <div id="favoritesList"></div>
+  </aside>
+
+  <dialog id="noteDialog" class="note-dialog">
+    <form id="noteForm">
+      <div class="panel-heading"><h2>Notitie bij dit vers</h2><button id="closeNoteButton" class="small-button" type="button">Sluiten</button></div>
+      <p id="noteVerseReference" class="reference"></p>
+      <blockquote id="noteVerseText"></blockquote>
+      <label for="noteInput">Jouw notitie</label>
+      <textarea id="noteInput" rows="5" placeholder="Wat wil je onthouden of meenemen?"></textarea>
+      <p id="noteMessage" class="status" role="status"></p>
+      <div class="button-row"><button id="cancelNoteButton" class="secondary" type="button">Annuleren</button><button class="primary" type="submit">Notitie opslaan</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <footer class="footer"><span>BID · VERTROUW · VOLG</span><span id="backgroundCredit">Achtergrondfoto via Unsplash</span></footer>
+</body>
+</html>
