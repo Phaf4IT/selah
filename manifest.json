@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Selah",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Een rustig, christelijk dashboard met Bijbelteksten, reflectie en natuur.",
-  "permissions": ["storage"],
-  "host_permissions": [
-    "https://bible.helloao.org/*",
-    "https://api.unsplash.com/*",
-    "https://images.unsplash.com/*",
-    "https://plus.unsplash.com/*"
+  "permissions": [
+    "storage"
   ],
+  "host_permissions": [
+    "https://bible.helloao.org/",
+    "https://api.openverse.org/"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' https: data:;"
+  },
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   }

@@ -20,7 +20,7 @@ const STORAGE_KEYS = Object.freeze({
 });
 
 const HELLOAO_API_BASE = "https://bible.helloao.org/api";
-const UNSPLASH_BASE = "https://api.unsplash.com";
+const OPENVERSE_API_BASE = "https://api.openverse.org/v1";
 
 const VERSE_CACHE_TTL = 24 * 60 * 60 * 1000;
 const TRANSLATIONS_CACHE_TTL = 24 * 60 * 60 * 1000;
@@ -156,11 +156,7 @@ const DEFAULT_SETTINGS = Object.freeze({
     bibleLanguage: "",
     reflectionEnabled: true,
     backgroundFrequency: "daily",
-        unsplashAccessKey: ""
 });
-
-const FALLBACK_BACKGROUND =
-    "https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=2000&q=85";
 
 const state = {
     settings: { ...DEFAULT_SETTINGS },
@@ -177,7 +173,9 @@ const state = {
     noteFavoriteId: null,
     toastTimer: null,
     lastTranslationRequestAt: 0,
-    lastUnsplashRequestAt: 0
+    lastOpenverseRequestAt: 0,
+    openverseImages: [],
+    currentBackgroundIndex: -1
 };
 
 const $ = (id) => document.getElementById(id);
@@ -248,10 +246,17 @@ function isValidHttpUrl(value, allowedHosts) {
 }
 
 function isValidImageUrl(value) {
-    return isValidHttpUrl(value, [
-        "images.unsplash.com",
-        "plus.unsplash.com"
-    ]);
+    try {
+        const url = new URL(value);
+
+        return (
+            url.protocol === "https:" &&
+            !url.username &&
+            !url.password
+        );
+    } catch {
+        return false;
+    }
 }
 
 function setText(id, value) {
@@ -376,7 +381,6 @@ function sanitizeSettings(raw) {
         bibleLanguage: safeString(source.bibleLanguage, 20),
         reflectionEnabled: source.reflectionEnabled !== false,
         backgroundFrequency: frequency,
-        unsplashAccessKey: safeString(source.unsplashAccessKey, 500).trim()
     };
 }
 
@@ -888,7 +892,6 @@ function fillSettingsForm() {
     $("themeSelect").value = state.settings.theme;
     $("backgroundFrequency").value = state.settings.backgroundFrequency;
     $("reflectionEnabled").checked = state.settings.reflectionEnabled;
-    $("unsplashAccessKey").value = state.settings.unsplashAccessKey;
 
     if (state.settings.bibleId) {
         const select = $("translationSelect");
@@ -934,7 +937,6 @@ function getSettingsFormValues() {
                 : ""),
         reflectionEnabled: $("reflectionEnabled").checked,
         backgroundFrequency: $("backgroundFrequency").value,
-        unsplashAccessKey: $("unsplashAccessKey").value
     });
 }
 
@@ -972,8 +974,7 @@ async function saveSettings(event) {
         }
 
         if (
-            oldSettings.backgroundFrequency !== newSettings.backgroundFrequency ||
-            oldSettings.unsplashAccessKey !== newSettings.unsplashAccessKey
+            oldSettings.backgroundFrequency !== newSettings.backgroundFrequency
         ) {
             await loadBackground({ force: false });
         }
@@ -1454,30 +1455,40 @@ async function getBackgroundCache() {
 
 function makeFallbackBackgroundEntry() {
     return {
-        url: FALLBACK_BACKGROUND,
+        url: "",
         photographer: "",
         photographerUrl: "",
         photoUrl: "",
+        license: "",
+        licenseUrl: "",
+        title: "",
         source: "fallback",
         savedAt: Date.now()
     };
 }
 
 function sanitizeBackgroundEntry(raw) {
-    if (!isObject(raw) || !isValidImageUrl(raw.url)) {
+    if (!isObject(raw)) {
+        return null;
+    }
+
+    const isFallback = raw.source === "fallback";
+
+    if (!isFallback && !isValidImageUrl(raw.url)) {
         return null;
     }
 
     return {
-        url: raw.url,
+        url: isFallback ? "" : raw.url,
         photographer: safeString(raw.photographer, 200),
-        photographerUrl: isValidHttpUrl(raw.photographerUrl, ["unsplash.com"])
-            ? raw.photographerUrl
-            : "",
-        photoUrl: isValidHttpUrl(raw.photoUrl, ["unsplash.com"])
-            ? raw.photoUrl
-            : "",
-        source: raw.source === "unsplash" ? "unsplash" : "fallback",
+        photographerUrl: isValidHttpUrl(raw.photographerUrl, [
+            new URL(raw.photographerUrl || "https://invalid.example").hostname
+        ]) ? raw.photographerUrl : "",
+        photoUrl: isValidImageUrl(raw.photoUrl) ? raw.photoUrl : "",
+        license: safeString(raw.license, 100),
+        licenseUrl: isValidImageUrl(raw.licenseUrl) ? raw.licenseUrl : "",
+        title: safeString(raw.title, 300),
+        source: isFallback ? "fallback" : "openverse",
         savedAt: Number.isFinite(raw.savedAt) ? raw.savedAt : 0
     };
 }
@@ -1496,7 +1507,7 @@ async function getCachedBackground(force = false) {
     }
 
     if (
-        entry.source === "unsplash" &&
+        entry.source === "openverse" &&
         Date.now() - entry.savedAt > BACKGROUND_CACHE_TTL
     ) {
         return null;
@@ -1509,57 +1520,78 @@ function renderBackgroundCredit(entry) {
     const container = $("backgroundCredit");
     container.replaceChildren();
 
-    if (
-        entry.source === "unsplash" &&
-        entry.photographer &&
-        entry.photographerUrl &&
-        entry.photoUrl
-    ) {
-        container.appendChild(document.createTextNode("Foto door "));
-
-        const photographerLink = document.createElement("a");
-        photographerLink.href = entry.photographerUrl;
-        photographerLink.target = "_blank";
-        photographerLink.rel = "noopener noreferrer";
-        photographerLink.textContent = entry.photographer;
-
-        container.appendChild(photographerLink);
-        container.appendChild(document.createTextNode(" / "));
-
-        const unsplashLink = document.createElement("a");
-        unsplashLink.href = entry.photoUrl;
-        unsplashLink.target = "_blank";
-        unsplashLink.rel = "noopener noreferrer";
-        unsplashLink.textContent = "Unsplash";
-
-        container.appendChild(unsplashLink);
+    if (entry.source !== "openverse") {
+        container.textContent =
+            "Neem even de tijd om stil te worden.";
         return;
     }
 
-    container.textContent =
-        "Achtergrond: offline terugvalafbeelding. Bron: Unsplash.";
+    const addLink = (label, url) => {
+        if (!url || !isValidImageUrl(url)) {
+            return;
+        }
+
+        if (container.childNodes.length) {
+            container.appendChild(document.createTextNode(" · "));
+        }
+
+        const link = document.createElement("a");
+        link.href = url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = label;
+        container.appendChild(link);
+    };
+
+    if (entry.title) {
+        container.appendChild(document.createTextNode(entry.title));
+    }
+
+    if (entry.photographer) {
+        if (container.childNodes.length) {
+            container.appendChild(document.createTextNode(" · "));
+        }
+
+        container.appendChild(
+            document.createTextNode(`Foto: ${entry.photographer}`)
+        );
+    }
+
+    addLink("Bron", entry.photoUrl);
+    addLink(
+        entry.license || "Licentie",
+        entry.licenseUrl
+    );
+
+    if (!container.childNodes.length) {
+        container.textContent = "Foto via Openverse.";
+    }
 }
 
 function applyBackground(entry) {
     const safeEntry = sanitizeBackgroundEntry(entry) ||
         makeFallbackBackgroundEntry();
 
+    const background = $("background");
+
+    if (!safeEntry.url) {
+        background.style.backgroundImage = "none";
+        background.style.backgroundColor = "#263b35";
+        renderBackgroundCredit(safeEntry);
+        return;
+    }
+
     const image = new Image();
 
     image.onload = () => {
-        $("background").style.backgroundImage =
+        background.style.backgroundImage =
             `url("${safeEntry.url.replace(/["\\\n\r]/g, "")}")`;
-
+        background.style.backgroundColor = "#263b35";
         renderBackgroundCredit(safeEntry);
     };
 
     image.onerror = () => {
-        const fallback = makeFallbackBackgroundEntry();
-
-        $("background").style.backgroundImage =
-            `url("${fallback.url}")`;
-
-        renderBackgroundCredit(fallback);
+        applyBackground(makeFallbackBackgroundEntry());
     };
 
     image.src = safeEntry.url;
@@ -1588,127 +1620,120 @@ async function saveBackgroundCache(entry) {
     await storageSet(STORAGE_KEYS.backgroundCache, cache);
 }
 
-async function fetchUnsplashBackground() {
-    const accessKey = state.settings.unsplashAccessKey;
+async function fetchOpenverseBackground() {
+    const url = new URL(`${OPENVERSE_API_BASE}/images/`);
 
-    if (!accessKey) {
-        throw new Error("Geen Unsplash Access Key ingesteld.");
-    }
-
-    /*
-     * Officiële Unsplash API. Gebruik de geretourneerde urls.regular
-     * voor het weergeven van de afbeelding.
-     *
-     * Een weergave is geen downloadactie; daarom wordt de download-
-     * tracking-URL niet aangeroepen voor normaal tonen als achtergrond.
-     */
-    const url = new URL(`${UNSPLASH_BASE}/photos/random`);
-
-    url.searchParams.set("query", "quiet nature landscape forest lake");
-    url.searchParams.set("orientation", "landscape");
-    url.searchParams.set("content_filter", "high");
+    url.searchParams.set("q", "nature landscape");
+    url.searchParams.set("category", "photograph");
+    url.searchParams.set("aspect_ratio", "wide");
+    url.searchParams.set("page_size", "20");
+    url.searchParams.set("page", "1");
+    url.searchParams.set("mature", "false");
+    url.searchParams.set("filter_dead", "true");
 
     const response = await fetchWithTimeout(url.toString(), {
         method: "GET",
         headers: {
-            "Authorization": `Client-ID ${accessKey}`,
-            "Accept-Version": "v1"
+            "Accept": "application/json"
         },
         cache: "no-store"
     });
 
     const data = await response.json();
 
-    if (!isObject(data) || !isObject(data.urls) || !isObject(data.user)) {
-        throw new Error("Unsplash gaf geen geldige afbeeldingsgegevens terug.");
+    if (!isObject(data) || !Array.isArray(data.results)) {
+        throw new Error(
+            "Openverse gaf geen geldige afbeeldingsresultaten terug."
+        );
     }
 
-    const imageUrl = safeString(data.urls.regular, 2000);
+    const candidates = data.results.filter((item) =>
+        isObject(item) &&
+        isValidImageUrl(item.url) &&
+        isValidImageUrl(item.foreign_landing_url) &&
+        typeof item.license === "string" &&
+        item.license.trim() !== "" &&
+        typeof item.license_url === "string" &&
+        isValidImageUrl(item.license_url)
+    );
 
-    if (!isValidImageUrl(imageUrl)) {
-        throw new Error("Unsplash gaf een ongeldige afbeeldings-URL terug.");
+    if (!candidates.length) {
+        throw new Error("Geen geschikte foto's gevonden.");
     }
 
-    const photographer = safeString(data.user.name, 200);
-    const photographerUrlRaw = data.user.links?.html;
-    const photoUrlRaw = data.links?.html;
-
-    const photographerUrl = isValidHttpUrl(
-        photographerUrlRaw,
-        ["unsplash.com"]
-    )
-        ? photographerUrlRaw
-        : "https://unsplash.com";
-
-    const photoUrl = isValidHttpUrl(photoUrlRaw, ["unsplash.com"])
-        ? photoUrlRaw
-        : "https://unsplash.com";
-
-    return {
-        url: imageUrl,
-        photographer,
-        photographerUrl,
-        photoUrl,
-        source: "unsplash",
+    state.openverseImages = candidates.map((photo) => ({
+        url: photo.url,
+        title: safeString(photo.title, 300),
+        photographer: safeString(photo.creator, 200),
+        photographerUrl: isValidImageUrl(photo.creator_url)
+            ? photo.creator_url
+            : "",
+        photoUrl: photo.foreign_landing_url,
+        license: safeString(photo.license, 100).toUpperCase(),
+        licenseUrl: photo.license_url,
+        source: "openverse",
         savedAt: Date.now()
-    };
+    }));
+
+    return state.openverseImages[0];
 }
 
 async function loadBackground(options = {}) {
     const force = options.force === true;
 
-    const now = Date.now();
+    // Bij handmatig wisselen: kies een andere foto uit de bestaande array.
+    if (force && state.openverseImages.length > 1) {
+        const previousIndex = state.currentBackgroundIndex;
 
-    if (force && now - state.lastUnsplashRequestAt < 5000) {
-        showToast("Wacht even voordat je opnieuw een achtergrond ophaalt.");
-        return;
-    }
+        let nextIndex = Math.floor(
+            Math.random() * state.openverseImages.length
+        );
 
-    const cached = await getCachedBackground(force);
-
-    if (cached) {
-        applyBackground(cached);
-        return;
-    }
-
-    if (!state.settings.unsplashAccessKey) {
-        const fallback = makeFallbackBackgroundEntry();
-
-        applyBackground(fallback);
-
-        if (force) {
-            showToast("Voeg een Unsplash Access Key toe om nieuwe foto's op te halen.");
-        }
-
-        return;
-    }
-
-    state.lastUnsplashRequestAt = now;
-
-    const button = $("refreshBackgroundButton");
-    button.disabled = true;
-
-    try {
-        const entry = await fetchUnsplashBackground();
-
-        applyBackground(entry);
-        await saveBackgroundCache(entry);
-    } catch (error) {
-        console.warn("Selah: Unsplash-afbeelding ophalen mislukt.", error);
-
-        const fallback = cached || makeFallbackBackgroundEntry();
-        applyBackground(fallback);
-
-        if (force) {
-            showToast(
-                friendlyError(
-                    error,
-                    "De nieuwe achtergrond kon niet worden opgehaald. De terugvalafbeelding wordt gebruikt."
-                )
+        // Voorkom dat dezelfde foto direct opnieuw gekozen wordt.
+        while (nextIndex === previousIndex) {
+            nextIndex = Math.floor(
+                Math.random() * state.openverseImages.length
             );
         }
+
+        state.currentBackgroundIndex = nextIndex;
+        applyBackground(state.openverseImages[nextIndex]);
+        return;
+    }
+
+    // Gebruik eerst de bestaande cache.
+    if (!force) {
+        const cached = await getCachedBackground(false);
+
+        if (cached) {
+            applyBackground(cached);
+            return;
+        }
+    }
+
+    const button = $("refreshBackgroundButton");
+    if (button) button.disabled = true;
+
+    try {
+        // Alleen ophalen als de array nog niet gevuld is.
+        if (!state.openverseImages.length) {
+            await fetchOpenverseBackground();
+        }
+
+        if (state.openverseImages.length) {
+            state.currentBackgroundIndex = 0;
+
+            const entry = state.openverseImages[0];
+            applyBackground(entry);
+            await saveBackgroundCache(entry);
+        } else {
+            applyBackground(makeFallbackBackgroundEntry());
+        }
+    } catch (error) {
+        console.error("Selah: Openverse-afbeeldingen laden mislukt.", error);
+        applyBackground(makeFallbackBackgroundEntry());
     } finally {
-        button.disabled = false;
+        if (button) button.disabled = false;
     }
 }
 

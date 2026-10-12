@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta
+          http-equiv="Content-Security-Policy"
+          content="img-src 'self' https: data:;"
+  >
   <title>Selah — Een moment met God</title>
   <link rel="stylesheet" href="style.css">
   <script src="newtab.js" defer></script>
@@ -67,9 +71,6 @@
 
       <label class="check"><input id="reflectionEnabled" type="checkbox" checked> Toon reflectievraag</label>
 
-      <label for="unsplashAccessKey">Unsplash Access Key (optioneel)</label>
-      <input id="unsplashAccessKey" type="password" autocomplete="off" placeholder="Plak je Unsplash Access Key">
-      <p class="hint">Zonder sleutel gebruikt Selah een vaste achtergrond. Een sleutel is alleen nodig om via Unsplash nieuwe foto's op te halen.</p>
       <div class="button-row"><button id="cancelSettingsButton" class="secondary" type="button">Annuleren</button><button class="primary" type="submit">Instellingen opslaan</button></div>
       <p id="settingsMessage" class="status" role="status"></p>
     </form>
