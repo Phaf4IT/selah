@@ -16,7 +16,8 @@ const STORAGE_KEYS = Object.freeze({
     favorites: "selah.favorites.v1",
     verseCache: "selah.verseCache.helloao.v1",
     translationsCache: "selah.translationsCache.helloao.v1",
-    backgroundCache: "selah.backgroundCache.v1"
+    backgroundCache: "selah.backgroundCache.v1",
+    dailySession: "selah.dailySession.v1"
 });
 
 const HELLOAO_API_BASE = "https://bible.helloao.org/api";
@@ -26,6 +27,19 @@ const VERSE_CACHE_TTL = 24 * 60 * 60 * 1000;
 const TRANSLATIONS_CACHE_TTL = 24 * 60 * 60 * 1000;
 const BACKGROUND_CACHE_TTL = 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 12000;
+
+const OPENVERSE_QUERIES = Object.freeze([
+    "nature landscape",
+    "mountain sunrise",
+    "forest path",
+    "ocean horizon",
+    "meadow flowers",
+    "quiet lake",
+    "rolling hills",
+    "sky clouds"
+]);
+
+const OPENVERSE_MAX_PAGE = 20;
 
 const THEMES = Object.freeze({
     all: "Alle thema's",
@@ -175,7 +189,9 @@ const state = {
     lastTranslationRequestAt: 0,
     lastOpenverseRequestAt: 0,
     openverseImages: [],
-    currentBackgroundIndex: -1
+    currentBackgroundIndex: -1,
+    backgroundDailyIndex: 0,
+    backgroundManualOffset: 0
 };
 
 const $ = (id) => document.getElementById(id);
@@ -362,6 +378,35 @@ async function storageRemove(key) {
     }
 
     localStorage.removeItem(key);
+}
+
+async function getDailySession() {
+    const raw = await storageGet(STORAGE_KEYS.dailySession, {});
+
+    if (!isObject(raw) || raw.dateKey !== localDateKey()) {
+        return {
+            dateKey: localDateKey(),
+            verseOffset: 0,
+            backgroundManualOffset: 0
+        };
+    }
+
+    return {
+        dateKey: localDateKey(),
+        verseOffset: Math.max(0, Number(raw.verseOffset) || 0),
+        backgroundManualOffset: Math.max(0, Number(raw.backgroundManualOffset) || 0)
+    };
+}
+
+async function saveDailySession(updates) {
+    const session = {
+        ...(await getDailySession()),
+        ...updates,
+        dateKey: localDateKey()
+    };
+
+    await storageSet(STORAGE_KEYS.dailySession, session);
+    return session;
 }
 
 function sanitizeSettings(raw) {
@@ -823,6 +868,8 @@ async function showNextVerse() {
         state.manualVerseOffset = 0;
     }
 
+    await saveDailySession({ verseOffset: state.manualVerseOffset });
+
     const selected = chooseDailyCatalogVerse(state.manualVerseOffset);
     const result = await loadVerseWithFallback(selected);
 
@@ -962,6 +1009,7 @@ async function saveSettings(event) {
             oldSettings.bibleId !== newSettings.bibleId
         ) {
             state.manualVerseOffset = 0;
+            await saveDailySession({ verseOffset: 0 });
             await showVerse(0);
         } else if (
             oldSettings.reflectionEnabled !== newSettings.reflectionEnabled
@@ -1448,6 +1496,39 @@ function makeBackgroundCacheKey() {
     return `day-${localDateKey()}`;
 }
 
+function makeBackgroundDiscoverySeed(extra = "") {
+    return [makeBackgroundCacheKey(), extra].filter(Boolean).join("|");
+}
+
+function mapOpenversePhotoToEntry(photo) {
+    return {
+        url: photo.url,
+        title: safeString(photo.title, 300),
+        photographer: safeString(photo.creator, 200),
+        photographerUrl: isValidImageUrl(photo.creator_url)
+            ? photo.creator_url
+            : "",
+        photoUrl: photo.foreign_landing_url,
+        license: safeString(photo.license, 100).toUpperCase(),
+        licenseUrl: photo.license_url,
+        source: "openverse",
+        savedAt: Date.now()
+    };
+}
+
+function pickBackgroundIndexFromPool(length) {
+    if (!length) {
+        return 0;
+    }
+
+    const seed = makeBackgroundDiscoverySeed();
+    state.backgroundDailyIndex = deterministicIndex(`${seed}|image`, length);
+
+    return (
+        state.backgroundDailyIndex + state.backgroundManualOffset
+    ) % length;
+}
+
 async function getBackgroundCache() {
     const cache = await storageGet(STORAGE_KEYS.backgroundCache, {});
     return isObject(cache) ? cache : {};
@@ -1620,14 +1701,19 @@ async function saveBackgroundCache(entry) {
     await storageSet(STORAGE_KEYS.backgroundCache, cache);
 }
 
-async function fetchOpenverseBackground() {
+async function fetchOpenverseBackground(extraSeed = "") {
+    const seed = makeBackgroundDiscoverySeed(extraSeed);
+    const query = OPENVERSE_QUERIES[
+        deterministicIndex(`${seed}|query`, OPENVERSE_QUERIES.length)
+    ];
+    const page = 1 + deterministicIndex(`${seed}|page`, OPENVERSE_MAX_PAGE);
     const url = new URL(`${OPENVERSE_API_BASE}/images/`);
 
-    url.searchParams.set("q", "nature landscape");
+    url.searchParams.set("q", query);
     url.searchParams.set("category", "photograph");
     url.searchParams.set("aspect_ratio", "wide");
     url.searchParams.set("page_size", "20");
-    url.searchParams.set("page", "1");
+    url.searchParams.set("page", String(page));
     url.searchParams.set("mature", "false");
     url.searchParams.set("filter_dead", "true");
 
@@ -1661,52 +1747,67 @@ async function fetchOpenverseBackground() {
         throw new Error("Geen geschikte foto's gevonden.");
     }
 
-    state.openverseImages = candidates.map((photo) => ({
-        url: photo.url,
-        title: safeString(photo.title, 300),
-        photographer: safeString(photo.creator, 200),
-        photographerUrl: isValidImageUrl(photo.creator_url)
-            ? photo.creator_url
-            : "",
-        photoUrl: photo.foreign_landing_url,
-        license: safeString(photo.license, 100).toUpperCase(),
-        licenseUrl: photo.license_url,
-        source: "openverse",
-        savedAt: Date.now()
-    }));
+    state.openverseImages = candidates.map(mapOpenversePhotoToEntry);
 
-    return state.openverseImages[0];
+    return state.openverseImages;
+}
+
+async function ensureOpenversePool(extraSeed = "") {
+    if (state.openverseImages.length) {
+        return state.openverseImages;
+    }
+
+    return fetchOpenverseBackground(extraSeed);
+}
+
+async function applyBackgroundFromPool(index) {
+    if (!state.openverseImages.length) {
+        applyBackground(makeFallbackBackgroundEntry());
+        return;
+    }
+
+    const safeIndex = (
+        index + state.openverseImages.length * 1000
+    ) % state.openverseImages.length;
+
+    state.currentBackgroundIndex = safeIndex;
+
+    const entry = state.openverseImages[safeIndex];
+    applyBackground(entry);
+    await saveBackgroundCache(entry);
 }
 
 async function loadBackground(options = {}) {
     const force = options.force === true;
 
-    // Bij handmatig wisselen: kies een andere foto uit de bestaande array.
-    if (force && state.openverseImages.length > 1) {
-        const previousIndex = state.currentBackgroundIndex;
-
-        let nextIndex = Math.floor(
-            Math.random() * state.openverseImages.length
-        );
-
-        // Voorkom dat dezelfde foto direct opnieuw gekozen wordt.
-        while (nextIndex === previousIndex) {
-            nextIndex = Math.floor(
-                Math.random() * state.openverseImages.length
-            );
-        }
-
-        state.currentBackgroundIndex = nextIndex;
-        applyBackground(state.openverseImages[nextIndex]);
-        return;
+    if (force) {
+        state.backgroundManualOffset += 1;
+        await saveDailySession({
+            backgroundManualOffset: state.backgroundManualOffset
+        });
     }
 
-    // Gebruik eerst de bestaande cache.
     if (!force) {
         const cached = await getCachedBackground(false);
 
         if (cached) {
             applyBackground(cached);
+
+            const cachedIndex = state.openverseImages.findIndex((item) =>
+                item.url === cached.url
+            );
+
+            if (cachedIndex >= 0) {
+                state.currentBackgroundIndex = cachedIndex;
+            } else {
+                void ensureOpenversePool("").catch((error) => {
+                    console.warn(
+                        "Selah: achtergrondpool kon niet worden voorbereid.",
+                        error
+                    );
+                });
+            }
+
             return;
         }
     }
@@ -1715,17 +1816,35 @@ async function loadBackground(options = {}) {
     if (button) button.disabled = true;
 
     try {
-        // Alleen ophalen als de array nog niet gevuld is.
-        if (!state.openverseImages.length) {
-            await fetchOpenverseBackground();
+        const canReusePool =
+            force &&
+            state.openverseImages.length > 1;
+
+        if (canReusePool) {
+            const pickIndex = pickBackgroundIndexFromPool(
+                state.openverseImages.length
+            );
+
+            await applyBackgroundFromPool(pickIndex);
+            return;
         }
 
-        if (state.openverseImages.length) {
-            state.currentBackgroundIndex = 0;
+        const extraSeed = force
+            ? `manual-${state.backgroundManualOffset}`
+            : "";
 
-            const entry = state.openverseImages[0];
-            applyBackground(entry);
-            await saveBackgroundCache(entry);
+        if (force) {
+            state.openverseImages = [];
+        }
+
+        await ensureOpenversePool(extraSeed);
+
+        if (state.openverseImages.length) {
+            const pickIndex = pickBackgroundIndexFromPool(
+                state.openverseImages.length
+            );
+
+            await applyBackgroundFromPool(pickIndex);
         } else {
             applyBackground(makeFallbackBackgroundEntry());
         }
@@ -1804,6 +1923,10 @@ async function loadInitialState() {
 
     state.settings = sanitizeSettings(rawSettings);
 
+    const dailySession = await getDailySession();
+    state.manualVerseOffset = dailySession.verseOffset;
+    state.backgroundManualOffset = dailySession.backgroundManualOffset;
+
     await loadFavorites();
 
     fillSettingsForm();
@@ -1817,11 +1940,11 @@ async function loadInitialState() {
     await loadBackground({ force: false });
 
     try {
-        await showVerse(0);
+        await showVerse(state.manualVerseOffset);
     } catch (error) {
         console.error("Selah: initialiseren van de Bijbeltekst mislukt.", error);
 
-        const fallback = chooseOfflineVerse(0);
+        const fallback = chooseOfflineVerse(state.manualVerseOffset);
 
         renderVerse(
             {
