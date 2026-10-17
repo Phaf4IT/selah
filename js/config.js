@@ -26,7 +26,19 @@ export const OPENVERSE_QUERIES = Object.freeze([
     "sky clouds"
 ]);
 
-export const OPENVERSE_MAX_PAGE = 20;
+/** Anonymous Openverse requests: page × page_size may not exceed this depth. */
+export const OPENVERSE_ANON_MAX_DEPTH = 240;
+
+export const OPENVERSE_PAGE_SIZES = Object.freeze([12, 15, 20]);
+
+/** Extra query slices — each yields a different result ordering/set within the depth cap. */
+export const OPENVERSE_LICENSE_VARIANTS = Object.freeze([
+    {},
+    { license: "cc0" },
+    { license: "by" },
+    { license_type: "commercial" },
+    { license_type: "modification" }
+]);
 
 export const THEMES = Object.freeze({
     all: "Alle thema's",

@@ -1,7 +1,9 @@
 import {
     BACKGROUND_CACHE_TTL,
+    OPENVERSE_ANON_MAX_DEPTH,
     OPENVERSE_API_BASE,
-    OPENVERSE_MAX_PAGE,
+    OPENVERSE_LICENSE_VARIANTS,
+    OPENVERSE_PAGE_SIZES,
     OPENVERSE_QUERIES,
     STORAGE_KEYS
 } from "../config.js";
@@ -215,6 +217,16 @@ export function applyBackground(entry) {
     image.src = safeEntry.url;
 }
 
+export function computeOpenverseMaxPage(pageSize) {
+    const size = Number(pageSize);
+
+    if (!Number.isFinite(size) || size < 1) {
+        return 1;
+    }
+
+    return Math.max(1, Math.floor(OPENVERSE_ANON_MAX_DEPTH / size));
+}
+
 export async function saveBackgroundCache(entry) {
     const cache = await getBackgroundCache();
     const cacheKey = makeBackgroundCacheKey();
@@ -243,16 +255,27 @@ export async function fetchOpenverseBackground(extraSeed = "") {
     const query = OPENVERSE_QUERIES[
         deterministicIndex(`${seed}|query`, OPENVERSE_QUERIES.length)
     ];
-    const page = 1 + deterministicIndex(`${seed}|page`, OPENVERSE_MAX_PAGE);
+    const pageSize = OPENVERSE_PAGE_SIZES[
+        deterministicIndex(`${seed}|page_size`, OPENVERSE_PAGE_SIZES.length)
+    ];
+    const maxPage = computeOpenverseMaxPage(pageSize);
+    const page = 1 + deterministicIndex(`${seed}|page`, maxPage);
+    const licenseVariant = OPENVERSE_LICENSE_VARIANTS[
+        deterministicIndex(`${seed}|license`, OPENVERSE_LICENSE_VARIANTS.length)
+    ];
     const url = new URL(`${OPENVERSE_API_BASE}/images/`);
 
     url.searchParams.set("q", query);
     url.searchParams.set("category", "photograph");
     url.searchParams.set("aspect_ratio", "wide");
-    url.searchParams.set("page_size", "20");
+    url.searchParams.set("page_size", String(pageSize));
     url.searchParams.set("page", String(page));
     url.searchParams.set("mature", "false");
     url.searchParams.set("filter_dead", "true");
+
+    for (const [key, value] of Object.entries(licenseVariant)) {
+        url.searchParams.set(key, value);
+    }
 
     const response = await fetchWithTimeout(url.toString(), {
         method: "GET",
@@ -263,6 +286,14 @@ export async function fetchOpenverseBackground(extraSeed = "") {
     });
 
     const data = await response.json();
+
+    if (!response.ok) {
+        const detail = isObject(data) && typeof data.detail === "string"
+            ? data.detail
+            : `HTTP ${response.status}`;
+
+        throw new Error(`Openverse: ${detail}`);
+    }
 
     if (!isObject(data) || !Array.isArray(data.results)) {
         throw new Error(
